@@ -1,0 +1,62 @@
+trigger:
+  branches:
+    include:
+      - '*'
+
+pr:
+  branches:
+    include:
+      - '*'
+
+jobs:
+- job: ListSnapshotsAndExportToExcel
+  displayName: 'List Snapshots and Export to Excel'
+  pool:
+    vmImage: 'windows-latest'
+  steps:
+
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.x'
+        addToPath: true
+
+    - task: AzureCLI@2
+      displayName: 'Azure Login'
+      inputs:
+        azureSubscription: '<your_service_connection_name>'
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          az login --service-principal --username $(service_principal) --password $(service_principal_password) --tenant $(tenant_id)
+
+    - task: AzureCLI@2
+      displayName: 'List Snapshots'
+      inputs:
+        azureSubscription: '<your_service_connection_name>'
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          az snapshot list --query "[].{Name:name, ResourceGroup:resourceGroup, CreationDate:timeCreated}" --output table > snapshots.txt
+
+    - script: |
+        python3 -c "import pandas as pd
+
+        data = pd.read_csv('snapshots.txt', sep='\\s+', skiprows=1)
+        
+        writer = pd.ExcelWriter('snapshots.xlsx', engine='xlsxwriter')
+        
+        data.to_excel(writer, sheet_name='Snapshots', index=False)
+        
+        workbook = writer.book
+        worksheet = writer.sheets['Snapshots']
+        
+        header_format = workbook.add_format({'bold': True, 'bg_color': '#F8F8F8', 'border': 1})
+        worksheet.set_row(0, None, header_format)
+        
+        writer.save()"
+      displayName: 'Export to Excel'
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: 'snapshots'
